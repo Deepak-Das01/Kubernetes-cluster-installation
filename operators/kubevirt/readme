@@ -1,0 +1,77 @@
+#install kubevirt operator 
+
+export VERSION=$(curl -s https://api.github.com/repos/kubevirt/kubevirt/releases | grep tag_name | grep -v -- '-rc' | sort -r | head -1 | awk -F': ' '{print $2}' | sed 's/,//' | xargs)
+
+echo $VERSION
+
+kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/$VERSION/kubevirt-operator.yaml
+
+kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/$VERSION/kubevirt-cr.yaml
+
+
+#install cdi operator from creating boot disk isos
+
+export VERSION=$(curl -s https://api.github.com/repos/kubevirt/containerized-data-importer/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+kubectl create -f https://github.com/kubevirt/containerized-data-importer/releases/download/$VERSION/cdi-operator.yaml
+kubectl create -f https://github.com/kubevirt/containerized-data-importer/releases/download/$VERSION/cdi-cr.yaml
+
+#add one args in ingress deployment 
+kubectl -n ingress-nginx edit deploy ingress-nginx-controller
+
+  " --enable-ssl-passthrough  "
+
+kubectl -n ingress-nginx rollout restart deploy ingress-nginx-controller
+
+
+#Apply this patch for big imges 
+deepak@Dell-G3:~/volume01/kubernetes$ kubectl get cdi
+NAME   AGE   PHASE
+cdi    28h   Deployed
+deepak@Dell-G3:~/volume01/kubernetes$ kubectl patch cdi cdi --type merge -p '{
+  "spec": {
+    "config": {
+      "podResourceRequirements": {
+        "requests": { "cpu": "200m", "memory": "1Gi" },
+        "limits":   { "cpu": "1",    "memory": "2Gi" }
+}}}}'
+cdi.cdi.kubevirt.io/cdi patched
+deepak@Dell-G3:~/volume01/kubernetes$ kubectl get cdi cdi -o yaml | yq '.spec.config.podResourceRequirements'
+limits:
+  cpu: "1"
+  memory: 2Gi
+requests:
+  cpu: 200m
+  memory: 1Gi
+
+
+#create ingress service to upload iso in cdi
+
+kubectl apply -f operators/kubevirt/cdi-uploadproxy-ingress.yaml
+
+#install virtctl in local machine wher iso is placed 
+
+kubectl get kubevirt.kubevirt.io -n kubevirt kubevirt -o jsonpath='{.status.observedKubeVirtVersion}{"\n"}'
+curl -L -o virtctl   https://github.com/kubevirt/kubevirt/releases/download/v1.6.0-beta.0/virtctl-v1.6.0-beta.0-linux-amd64
+chmod +x virtctl
+sudo mv virtctl /usr/local/bin/
+virtctl version
+
+#upload the iso to the kubernetes pvc 
+#
+virtctl image-upload --image-path=/home/deepak/volume02/VM-images/alpine-virt-3.21.3-x86_64.iso --pvc-name=alpineiso --size=1Gi --storage-class=nfs-storage --uploadproxy-url=https://upload.cdi.kubelabs.com --insecure     # --namespace=
+
+#for main hardrive of vm create pvc in same namespace 
+
+kubectl apply -f operators/kubevirt/pvcdrive.yaml
+
+#edit the demo vm yaml file and run vm 
+#
+kubectl apply -f operators/kubevirt/demo-vm.yaml
+
+# check the running status of vm 
+
+kubectl get vm
+
+#enter inside the vm
+
+kubectl vnc vm <vm-name>

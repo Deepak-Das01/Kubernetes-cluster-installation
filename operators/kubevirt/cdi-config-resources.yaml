@@ -1,0 +1,14 @@
+# cdi-config-resources.yaml
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: CDIConfig
+metadata:
+  name: config
+spec:
+  podResourceRequirements:
+    requests:
+      cpu: "200m"
+      memory: "1Gi"
+    limits:
+      cpu: "1"
+      memory: "2Gi"
+

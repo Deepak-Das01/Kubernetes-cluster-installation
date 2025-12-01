@@ -1,0 +1,44 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kubevirt-manager-tls
+  namespace: kubevirt-manager
+spec:
+  secretName: kubevirt-manager-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: kubelabs-ca-issuer
+  dnsNames:
+    - virt.kubelabs.com
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubevirt-manager
+  namespace: kubevirt-manager
+  annotations:
+    cert-manager.io/cluster-issuer: kubelabs-ca-issuer
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # WebSocket/VNC friendly timeouts
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [ "virt.kubelabs.com" ]
+      secretName: kubevirt-manager-tls
+  rules:
+    - host: kubevirt.kubelabs.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kubevirt-manager
+                port:
+                  number: 8080
+

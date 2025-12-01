@@ -1,0 +1,28 @@
+#install nfs package on all worker/master nodes before doing this 
+sudo apt-get install -y nfs-common   # Ubuntu/Debian
+# or
+sudo dnf install -y nfs-utils        # Fedora/RHEL
+
+
+#install the helm repository in the system 
+helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner
+
+#create ns " kube-storage-nfs "
+kubectl create ns kube-storage-nfs
+
+#create values.yaml file 
+deepak@Dell-G3:~/kubernetes$ cat addons/storageclass/values.yaml 
+nfs:
+  server: 192.168.31.134
+  path: /root/kube-storage
+
+storageClass:
+  name: nfs-storage
+  defaultClass: true
+
+
+# Run helm command to deploy sc
+helm install nfs-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner -f addons/storageclass/values.yaml --namespace kube-storage-nfs
+
+# check the pods of kube-storage-nfs
+kubectl get pods -n kube-storage-nfs

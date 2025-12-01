@@ -1,0 +1,90 @@
+#install certmanager in kubernetes 
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml
+
+#check the status of pods in ns
+kubectl get pods -n ns
+
+#after this we need to install issuer cluster wide  ( we are usige self signed CA issue  )
+kubectl apply -f - <<'YAML'
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kubelabs-selfsigned-root
+  namespace: cert-manager
+spec:
+  selfSigned: {}
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kubelabs-root-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: kubelabs Root CA
+  secretName: kubelabs-root-ca
+  duration: 87600h        # 10 years
+  renewBefore: 720h       # renew 30 days before expiry (kept for hygiene; manual rotate root)
+  privateKey:
+    algorithm: RSA
+    size: 4096
+  issuerRef:
+    name: kubelabs-selfsigned-root
+    kind: Issuer
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: kubelabs-ca-issuer
+spec:
+  ca:
+    secretName: kubelabs-root-ca
+YAML
+
+#chedk the certificate status 
+kubectl -n cert-manager get certificate kubelabs-root-ca
+kubectl get clusterissuer kubelabs-ca-issuer -o yaml | yq '.status'
+
+deepak@Dell-G3:~/volume01/kubernetes$ kubectl get clusterissuer kubelabs-ca-issuer
+NAME                 READY   AGE
+kubelabs-ca-issuer   True    54s
+
+
+#to register self signed certificat in your local system 
+deepak@Dell-G3:~/volume01/kubernetes$ kubectl -n cert-manager get secret kubelabs-root-ca \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d > kubelabs-root-ca.crt
+
+deepak@Dell-G3:~/volume01/kubernetes$ sudo cp kubelabs-root-ca.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust
+
+# now create ingress as you want 
+deepak@Dell-G3:~/volume01/kubernetes$ kubectl apply -f - <<'YAML'
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubernetes-dashboard-tls
+  namespace: kubernetes-dashboard
+  annotations:
+    cert-manager.io/cluster-issuer: kubelabs-ca-issuer
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx        # <— change if your ingress class is different
+  tls:
+    - hosts:
+        - dashboard.kubelabs.com
+      secretName: dashboard-tls
+  rules:
+    - host: dashboard.kubelabs.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kubernetes-dashboard   # service in this ns
+                port:
+                  number: 443
+YAML
+

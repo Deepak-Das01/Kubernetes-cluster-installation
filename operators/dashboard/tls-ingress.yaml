@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubernetes-dashboard-tls
+  namespace: kubernetes-dashboard
+  annotations:
+    # Tell cert-manager which issuer to use
+    cert-manager.io/cluster-issuer: letsencrypt-issuer
+
+    # Your dashboard service speaks HTTPS (port 443/targetPort 8443)
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+
+    # Redirect HTTP->HTTPS for users (cert-manager’s solver will still work)
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - dashboard.kubelabs.com
+      secretName: dashboard-tls   # cert-manager will create/fill this
+  rules:
+    - host: dashboard.kubelabs.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kubernetes-dashboard
+                port:
+                  number: 443
+

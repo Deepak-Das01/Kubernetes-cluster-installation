@@ -1,0 +1,39 @@
+test ansible_host=192.168.157.136
+
+[bastion]
+bastion ansible_host=192.168.157.129
+
+[master]
+control01 ansible_host=192.168.157.130
+
+[data]
+data01 ansible_host=192.168.157.131
+data02 ansible_host=192.168.157.132
+
+[storage]
+storage01 ansible_host=192.168.157.133
+storage02 ansible_host=192.168.157.134
+
+[gateway]
+gateway ansible_host=192.168.157.135
+
+# Combine all hosts
+[allnodes:children]
+bastion
+control
+data
+storage
+gateway
+
+# Combine all hosts
+[kubenodes:children]
+master
+data
+storage
+gateway
+
+#worker roles
+[worker:children]
+data
+storage
+gateway

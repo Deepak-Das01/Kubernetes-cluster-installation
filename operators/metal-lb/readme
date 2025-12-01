@@ -1,0 +1,31 @@
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/manifests/metallb-native.yaml 
+
+ 
+
+Create a file metallb-config.yaml: 
+
+ 
+
+apiVersion: metallb.io/v1beta1 
+kind: IPAddressPool 
+metadata: 
+  name: first-pool 
+  namespace: metallb-system 
+spec: 
+  addresses: 
+  - 192.168.1.100-192.168.1.110  # Use an available range in your network 
+
+--- 
+
+apiVersion: metallb.io/v1beta1 
+kind: L2Advertisement 
+metadata: 
+  name: example 
+  namespace: metallb-system 
+
+ 
+Kubectl apply -f <file-name.yaml>
+
+ 
+kubectl create deployment nginx --image=nginx 
+kubectl expose deployment nginx --port=80 --type=LoadBalancer 

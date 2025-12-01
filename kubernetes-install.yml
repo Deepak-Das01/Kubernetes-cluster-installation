@@ -1,0 +1,116 @@
+---
+- name: Install Kubernetes kubelet, kubeadm, kubectl
+  hosts: test
+  become: yes
+
+  tasks:
+
+    # -------------------------------------------------------
+    # 1️⃣ Update apt and install dependencies
+    # -------------------------------------------------------
+
+    - name: Remove old/broken Kubernetes repo if exists
+      file:
+        path: /etc/apt/sources.list.d/kubernetes.list
+        state: absent
+
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+
+    # -------------------------------------------------------
+    # 2️⃣ Ensure keyrings directory exists
+    # -------------------------------------------------------
+    - name: Ensure /etc/apt/keyrings directory exists
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    # -------------------------------------------------------
+    # 3️⃣ Add Kubernetes GPG Key
+    # -------------------------------------------------------
+    - name: Download Kubernetes GPG Key
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | \
+        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Set permissions on Kubernetes keyring
+      file:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        mode: "0644"
+
+    # -------------------------------------------------------
+    # 4️⃣ Add Kubernetes Repository
+    # -------------------------------------------------------
+    - name: Add Kubernetes apt repository
+      copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        mode: "0644"
+        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /"
+
+    - name: Update apt cache after adding Kubernetes repo
+      apt:
+        update_cache: yes
+
+
+    # -------------------------------------------------------
+    # 5️⃣ Install kubelet, kubeadm, kubectl
+    # -------------------------------------------------------
+    - name: Install Kubernetes components
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+
+
+    # -------------------------------------------------------
+    # 6️⃣ VERIFICATION STEPS
+    # -------------------------------------------------------
+
+    - name: Verify Kubernetes binaries versions
+      shell: |
+        kubelet --version && \
+        kubeadm version -o short && \
+        kubectl version --client --short
+      register: k8s_versions
+      changed_when: false
+      failed_when: false
+
+    - name: Show Kubernetes versions
+      debug:
+        msg: "{{ k8s_versions.stdout }}"
+
+    - name: Verify Kubernetes repo exists
+      shell: grep -R "pkgs.k8s.io" /etc/apt/sources.list.d/kubernetes.list
+      register: repo_check
+      changed_when: false
+
+    - name: Show Kubernetes repo check
+      debug:
+        msg: "{{ repo_check.stdout }}"
+
+    - name: Verify Kubernetes GPG key exists
+      stat:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      register: key_check
+
+    - name: Show Kubernetes key verification
+      debug:
+        msg: "Kubernetes GPG key exists: {{ key_check.stat.exists }}"
+
