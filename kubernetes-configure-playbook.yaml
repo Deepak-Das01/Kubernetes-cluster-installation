@@ -1,0 +1,580 @@
+---
+- name: Configure Linux kernel requirements for Kubernetes
+  hosts: kubenodes
+  become: yes
+
+  tasks:
+
+    # -------------------------------------------------------
+    # 1️⃣ Create /etc/modules-load.d/k8s.conf
+    # -------------------------------------------------------
+    - name: Ensure required kernel modules load at boot
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    # -------------------------------------------------------
+    # 2️⃣ Load kernel modules immediately
+    # -------------------------------------------------------
+    - name: Load overlay module
+      command: modprobe overlay
+
+    - name: Load br_netfilter module
+      command: modprobe br_netfilter
+
+    # -------------------------------------------------------
+    # 3️⃣ Configure sysctl params
+    # -------------------------------------------------------
+    - name: Configure sysctl parameters for Kubernetes networking
+      copy:
+        dest: /etc/sysctl.d/k8s.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables=1
+          net.bridge.bridge-nf-call-ip6tables=1
+          net.ipv4.ip_forward=1
+        mode: '0644'
+
+    # -------------------------------------------------------
+    # 4️⃣ Apply sysctl
+    # -------------------------------------------------------
+    - name: Apply sysctl settings
+      command: sysctl --system
+      register: sysctl_output
+
+    - name: Show sysctl apply output
+      debug:
+        msg: "{{ sysctl_output.stdout }}"
+
+    # -------------------------------------------------------
+    # 5️⃣ Reload kernel modules via systemd
+    # -------------------------------------------------------
+    - name: Reload kernel modules via systemd
+      command: systemctl restart systemd-modules-load
+
+    # -------------------------------------------------------
+    # 6️⃣ Verify kernel modules (lsmod)
+    # -------------------------------------------------------
+    - name: Verify br_netfilter module
+      shell: lsmod | grep -E '^br_netfilter'
+      register: br_out
+      changed_when: false
+      failed_when: false
+
+    - name: Show br_netfilter output
+      debug:
+        msg: "{{ br_out.stdout }}"
+
+    - name: Verify overlay module
+      shell: lsmod | grep -E '^overlay'
+      register: overlay_out
+      changed_when: false
+      failed_when: false
+
+    - name: Show overlay output
+      debug:
+        msg: "{{ overlay_out.stdout }}"
+
+    # -------------------------------------------------------
+    # 7️⃣ Verify sysctl settings
+    # -------------------------------------------------------
+    - name: Verify sysctl values
+      shell: |
+        sysctl net.bridge.bridge-nf-call-iptables \
+               net.bridge.bridge-nf-call-ip6tables \
+               net.ipv4.ip_forward
+      register: sysctl_verify
+      changed_when: false
+
+    - name: Show sysctl verification
+      debug:
+        msg: "{{ sysctl_verify.stdout }}"
+
+
+- name: Install Containerd Runtime on Ubuntu (Kubernetes Standard)
+  hosts: kubenodes
+  become: yes
+
+  tasks:
+
+    # -------------------------------------------------------
+    # 1️⃣ Update package database & install dependencies
+    # -------------------------------------------------------
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages for HTTPS repositories
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+
+    # -------------------------------------------------------
+    # 2️⃣ Add Docker GPG key
+    # -------------------------------------------------------
+    - name: Create directory for Docker GPG key
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker GPG key
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+        gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Set permissions for Docker GPG key
+      file:
+        path: /etc/apt/keyrings/docker.gpg
+        mode: '0644'
+
+    # -------------------------------------------------------
+    # 3️⃣ Add Docker’s APT repository
+    # -------------------------------------------------------
+    - name: Get Ubuntu codename (e.g. jammy, focal)
+      shell: . /etc/os-release && echo $VERSION_CODENAME
+      register: ubuntu_codename
+      changed_when: false
+
+    - name: Get system architecture (e.g. amd64)
+      shell: dpkg --print-architecture
+      register: ubuntu_arch
+      changed_when: false
+
+    - name: Add Docker APT repository
+      copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        content: |
+          deb [arch={{ ubuntu_arch.stdout }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ubuntu_codename.stdout }} stable
+        mode: '0644'
+
+    - name: Update apt cache after adding Docker repo
+      apt:
+        update_cache: yes
+
+    # -------------------------------------------------------
+    # 4️⃣ Install containerd
+    # -------------------------------------------------------
+    - name: Install containerd.io package
+      apt:
+        name: containerd.io
+        state: present
+
+    # -------------------------------------------------------
+    # 5️⃣ Enable & start containerd
+    # -------------------------------------------------------
+    - name: Enable and start containerd service
+      systemd:
+        name: containerd
+        enabled: yes
+        state: started
+
+    # -------------------------------------------------------
+    # 6️⃣ VERIFICATION STAGE (PROOF)
+    # -------------------------------------------------------
+
+    - name: Verify containerd service status
+      shell: systemctl status containerd --no-pager
+      register: containerd_status
+      changed_when: false
+
+    - name: Show containerd service status
+      debug:
+        msg: "{{ containerd_status.stdout }}"
+
+    - name: Verify containerd version
+      shell: containerd --version
+      register: containerd_version
+      changed_when: false
+
+    - name: Show containerd version
+      debug:
+        msg: "{{ containerd_version.stdout }}"
+
+    - name: Verify Docker GPG key exists
+      stat:
+        path: /etc/apt/keyrings/docker.gpg
+      register: gpg_key
+
+    - name: Show GPG key verification
+      debug:
+        msg: "Docker GPG key exists: {{ gpg_key.stat.exists }}"
+
+    - name: Verify Docker repository is added
+      shell: grep -R 'download.docker.com' /etc/apt/sources.list.d/ | cat
+      register: docker_repo
+      changed_when: false
+
+    - name: Show Docker repo verification
+      debug:
+        msg: "{{ docker_repo.stdout }}"
+
+- name: Configure Containerd to use systemd cgroup driver
+  hosts: kubenodes
+  become: yes
+
+  tasks:
+
+    # -------------------------------------------------------
+    # 1️⃣ Backup existing containerd config (if exists)
+    # -------------------------------------------------------
+    - name: Create backup of old containerd config
+      copy:
+        src: /etc/containerd/config.toml
+        dest: /etc/containerd/config.toml.bak
+        remote_src: yes
+      ignore_errors: yes
+      when: ansible_facts['distribution'] == "Ubuntu"
+      changed_when: false
+
+    # -------------------------------------------------------
+    # 2️⃣ Generate new default containerd config
+    # -------------------------------------------------------
+    - name: Generate fresh containerd config.toml
+      shell: containerd config default > /etc/containerd/config.toml
+      args:
+        executable: /bin/bash
+
+    # -------------------------------------------------------
+    # 3️⃣ Enable SystemdCgroup = true
+    # -------------------------------------------------------
+    - name: Set SystemdCgroup = true inside config.toml
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+
+    # (Optional extra safety - ensure the block exists)
+    - name: Ensure runc runtime block exists (safety check)
+      blockinfile:
+        path: /etc/containerd/config.toml
+        block: |
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+              SystemdCgroup = true
+        insertafter: EOF
+
+    # -------------------------------------------------------
+    # 4️⃣ Restart containerd to apply changes
+    # -------------------------------------------------------
+    - name: Restart containerd
+      systemd:
+        name: containerd
+        state: restarted
+        enabled: yes
+
+    # -------------------------------------------------------
+    # 5️⃣ VERIFICATION — Show containerd status
+    # -------------------------------------------------------
+    - name: Verify containerd service status
+      shell: systemctl status containerd --no-pager
+      register: containerd_status
+      changed_when: false
+
+    - name: Show containerd status
+      debug:
+        msg: "{{ containerd_status.stdout }}"
+
+    # -------------------------------------------------------
+    # 6️⃣ VERIFICATION — Confirm SystemdCgroup = true
+    # -------------------------------------------------------
+    - name: Verify SystemdCgroup in config.toml
+      shell: grep -R "SystemdCgroup" /etc/containerd/config.toml
+      register: cgroup_check
+      changed_when: false
+
+    - name: Show SystemdCgroup verification
+      debug:
+        msg: "{{ cgroup_check.stdout }}"
+
+- name: Install Kubernetes kubelet, kubeadm, kubectl
+  hosts: kubenodes
+  become: yes
+
+  tasks:
+
+    # -------------------------------------------------------
+    # 1️⃣ Update apt and install dependencies
+    # -------------------------------------------------------
+
+    - name: Remove old/broken Kubernetes repo if exists
+      file:
+        path: /etc/apt/sources.list.d/kubernetes.list
+        state: absent
+
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+
+    # -------------------------------------------------------
+    # 2️⃣ Ensure keyrings directory exists
+    # -------------------------------------------------------
+    - name: Ensure /etc/apt/keyrings directory exists
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    # -------------------------------------------------------
+    # 3️⃣ Add Kubernetes GPG Key
+    # -------------------------------------------------------
+    - name: Download Kubernetes GPG Key
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | \
+        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Set permissions on Kubernetes keyring
+      file:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        mode: "0644"
+
+    # -------------------------------------------------------
+    # 4️⃣ Add Kubernetes Repository
+    # -------------------------------------------------------
+    - name: Add Kubernetes apt repository
+      copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        mode: "0644"
+        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /"
+
+    - name: Update apt cache after adding Kubernetes repo
+      apt:
+        update_cache: yes
+
+
+    # -------------------------------------------------------
+    # 5️⃣ Install kubelet, kubeadm, kubectl
+    # -------------------------------------------------------
+    - name: Install Kubernetes components
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+
+
+    # -------------------------------------------------------
+    # 6️⃣ VERIFICATION STEPS
+    # -------------------------------------------------------
+
+    - name: Verify Kubernetes binaries versions
+      shell: |
+        kubelet --version && \
+        kubeadm version -o short && \
+        kubectl version --client --short
+      register: k8s_versions
+      changed_when: false
+      failed_when: false
+
+    - name: Show Kubernetes versions
+      debug:
+        msg: "{{ k8s_versions.stdout }}"
+
+    - name: Verify Kubernetes repo exists
+      shell: grep -R "pkgs.k8s.io" /etc/apt/sources.list.d/kubernetes.list
+      register: repo_check
+      changed_when: false
+
+    - name: Show Kubernetes repo check
+      debug:
+        msg: "{{ repo_check.stdout }}"
+
+    - name: Verify Kubernetes GPG key exists
+      stat:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      register: key_check
+
+    - name: Show Kubernetes key verification
+      debug:
+        msg: "Kubernetes GPG key exists: {{ key_check.stat.exists }}"
+
+- name: Initialize Kubernetes Control Plane using default settings
+  hosts: master
+  become: yes
+
+  vars:
+    kubeconfig_remote_path: "/etc/kubernetes/admin.conf"
+    kubeconfig_local_path: "/root/kubeconfig.ansible"
+
+  tasks:
+
+    # -------------------------------------------------------
+    # 1️⃣ Disable Swap
+    # -------------------------------------------------------
+    - name: Disable swap (runtime)
+      command: swapoff -a
+
+    - name: Disable swap permanently in /etc/fstab
+      replace:
+        path: /etc/fstab
+        regexp: '(^.*swap.*$)'
+        replace: '# \\1'
+      ignore_errors: yes
+
+    # -------------------------------------------------------
+    # 2️⃣ kubeadm init (NO POD CIDR)
+    # -------------------------------------------------------
+    - name: Run kubeadm init with default settings
+      command: kubeadm init
+      register: kubeadm_output
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+    - name: Show kubeadm init output
+      debug:
+        msg: "{{ kubeadm_output.stdout }}"
+
+    # -------------------------------------------------------
+    # 3️⃣ Extract Join Command
+    # -------------------------------------------------------
+    - name: Generate fresh kubeadm join command
+      command: kubeadm token create --print-join-command
+      register: fresh_join
+
+    - name: Save join command fact
+      set_fact:
+        join_command: "{{ fresh_join.stdout | trim }}"
+
+    - name: Show fresh join command
+      debug:
+        msg: "{{ join_command }}"
+
+    # -------------------------------------------------------
+    # 4️⃣ Copy kubeconfig to controller (bastion)
+    # -------------------------------------------------------
+    - name: Fetch admin kubeconfig to Ansible Controller
+      fetch:
+        src: "{{ kubeconfig_remote_path }}"
+        dest: "{{ kubeconfig_local_path }}"
+        flat: yes
+
+    - name: Show saved kubeconfig location
+      debug:
+        msg: "Kubeconfig saved on controller at: {{ kubeconfig_local_path }}"
+
+    # -------------------------------------------------------
+    # 5️⃣ Install Weave Net CNI
+    # -------------------------------------------------------
+    - name: Apply Weave Net CNI
+      command: >
+        kubectl apply
+        -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+      environment:
+        KUBECONFIG: "{{ kubeconfig_remote_path }}"
+      register: weave_output
+
+    - name: Show Weave CNI output
+      debug:
+        msg: "{{ weave_output.stdout }}"
+
+    - name: Wait until node is Ready
+      command: kubectl get nodes
+      environment:
+        KUBECONFIG: "{{ kubeconfig_remote_path }}"
+      register: ready_check
+      retries: 25
+      delay: 10
+      until: "'Ready' in ready_check.stdout"
+
+    - name: Show final cluster status (node ready)
+      command: kubectl get nodes -o wide
+      environment:
+        KUBECONFIG: "{{ kubeconfig_remote_path }}"
+      register: final_nodes
+
+    - name: Show final nodes output
+      debug:
+        msg: "{{ final_nodes.stdout }}"
+
+    - name: Show all pods in all namespaces
+      command: kubectl get pods -A
+      environment:
+        KUBECONFIG: "{{ kubeconfig_remote_path }}"
+      register: final_pods
+
+    - name: Show final pods output
+      debug:
+        msg: "{{ final_pods.stdout }}"      
+
+#######################################################################
+# 10 SECOND WAIT BEFORE WORKER JOIN
+#######################################################################
+- name: Pause before joining workers
+  hosts: localhost
+  tasks:
+    - name: Wait 10 seconds for API server to stabilize
+      pause:
+        seconds: 10
+
+#######################################################################
+# PLAY 2 — Join Worker Nodes
+#######################################################################
+
+- name: Join worker nodes to Kubernetes cluster
+  hosts: worker
+  become: yes
+
+  vars:
+    join_cmd: "{{ hostvars[groups['master'][0]].join_command | trim }}"
+
+  tasks:
+
+    # 1️⃣ Disable swap on workers
+    - name: Disable swap (runtime)
+      command: swapoff -a
+
+    - name: Disable swap permanently
+      replace:
+        path: /etc/fstab
+        regexp: '(^.*swap.*$)'
+        replace: '# \\1'
+      ignore_errors: yes
+
+    # 2️⃣ Run join command
+    - name: Run kubeadm join
+      shell: "{{ join_cmd }}"
+      register: join_run
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+
+    - name: Show join command that was executed
+      debug:
+        msg: "{{ join_cmd }}"
+
+    - name: Show join output
+      debug:
+        msg: "{{ join_run.stdout }}"
+
+    # 3️⃣ Wait for worker registration
+    - name: Ensure kubelet is running
+      service:
+        name: kubelet
+        state: started
+        enabled: yes
+
+    - name: Pause 20 seconds for worker to register
+      pause:
+        seconds: 20
+
