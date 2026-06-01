@@ -1,0 +1,66 @@
+[2026-06-02 00:27.29]  ~
+[Deepak.msiK15] ⮞ kubectl get node
+NAME        STATUS   ROLES              AGE     VERSION
+control     Ready    control-plane      66m     v1.35.2
+edge        Ready    infra,monitoring   23m     v1.35.2
+storage01   Ready    ceph               20m     v1.35.2
+storage02   Ready    ceph               16m     v1.35.2
+storage03   Ready    ceph               6m16s   v1.35.2
+worker01    Ready    app-worker         43m     v1.35.2
+worker02    Ready    app-worker         38m     v1.35.2
+worker03    Ready    app-worker         26m     v1.35.2
+                                                                                                                                                                                           ✓
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[2026-06-02 00:27.30]  ~
+[Deepak.msiK15] ⮞ kubectl top nodes
+error: Metrics API not available
+                                                                                                                                                                                           ✗
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[2026-06-02 00:32.33]  ~
+[Deepak.msiK15] ⮞ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+serviceaccount/metrics-server created
+clusterrole.rbac.authorization.k8s.io/system:aggregated-metrics-reader created
+clusterrole.rbac.authorization.k8s.io/system:metrics-server created
+rolebinding.rbac.authorization.k8s.io/metrics-server-auth-reader created
+clusterrolebinding.rbac.authorization.k8s.io/metrics-server:system:auth-delegator created
+clusterrolebinding.rbac.authorization.k8s.io/system:metrics-server created
+service/metrics-server created
+deployment.apps/metrics-server created
+apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io created
+                                                                                                                                                                                           ✓
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[2026-06-02 00:33.14]  ~
+[Deepak.msiK15] ⮞ kubectl patch deployment metrics-server -n kube-system \
+  --type='json' \
+  -p='[
+    {
+      "op": "add",
+      "path": "/spec/template/spec/containers/0/args/-",
+      "value": "--kubelet-insecure-tls"
+    },
+    {
+      "op": "add",
+      "path": "/spec/template/spec/containers/0/args/-",
+      "value": "--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname"
+    }
+  ]'
+deployment.apps/metrics-server patched
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[2026-06-02 00:37.29]  ~
+[Deepak.msiK15] ⮞ kubectl get pods -A | grep -i Metrics
+kube-system   metrics-server-67bd94f666-fprvg   1/1     Running   0               4m22s
+                                                                                                                                                                                           ✓
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[2026-06-02 00:37.52]  ~
+[Deepak.msiK15] ⮞ kubectl top nodes
+NAME        CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)
+control     75m          1%       892Mi           12%
+edge        34m          0%       456Mi           6%
+storage01   39m          2%       450Mi           13%
+storage02   34m          1%       451Mi           13%
+storage03   45m          2%       602Mi           17%
+worker01    49m          1%       497Mi           6%
+worker02    44m          1%       474Mi           6%
+worker03    39m          0%       455Mi           6%
+                                                        
